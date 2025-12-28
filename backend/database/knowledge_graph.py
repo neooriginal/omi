@@ -10,6 +10,7 @@ from ._client import db
 users_collection = 'users'
 knowledge_nodes_collection = 'knowledge_nodes'
 knowledge_edges_collection = 'knowledge_edges'
+BATCH_SIZE = 500  # Firestore batch operation limit
 
 
 class KnowledgeNode:
@@ -231,7 +232,7 @@ def delete_knowledge_graph(uid: str) -> None:
     
     def _batch_delete(coll_ref):
         while True:
-            docs = list(coll_ref.limit(500).stream())
+            docs = list(coll_ref.limit(BATCH_SIZE).stream())
             if not docs:
                 break
             batch = db.batch()
@@ -261,7 +262,6 @@ def clean_knowledge_graph_for_memory(uid: str, memory_id: str) -> Dict[str, int]
     """
     user_ref = db.collection(users_collection).document(uid)
     nodes_ref = user_ref.collection(knowledge_nodes_collection)
-    edges_ref = user_ref.collection(knowledge_edges_collection)
     
     stats = {
         'nodes_updated': 0,
@@ -295,7 +295,7 @@ def clean_knowledge_graph_for_memory(uid: str, memory_id: str) -> Dict[str, int]
                 stats['nodes_updated'] += 1
                 batch_count += 1
                 
-                if batch_count >= 500:
+                if batch_count >= BATCH_SIZE:
                     batch.commit()
                     batch = db.batch()
                     batch_count = 0
@@ -312,7 +312,7 @@ def clean_knowledge_graph_for_memory(uid: str, memory_id: str) -> Dict[str, int]
             stats['nodes_deleted'] += 1
             batch_count += 1
             
-            if batch_count >= 500:
+            if batch_count >= BATCH_SIZE:
                 batch.commit()
                 batch = db.batch()
                 batch_count = 0
@@ -321,6 +321,7 @@ def clean_knowledge_graph_for_memory(uid: str, memory_id: str) -> Dict[str, int]
             batch.commit()
     
     # Step 3: Update/delete edges
+    edges_ref = user_ref.collection(knowledge_edges_collection)
     deleted_node_ids = set(nodes_to_delete)
     edges_to_delete = []
     batch = db.batch()
@@ -348,7 +349,7 @@ def clean_knowledge_graph_for_memory(uid: str, memory_id: str) -> Dict[str, int]
                 stats['edges_updated'] += 1
                 batch_count += 1
                 
-                if batch_count >= 500:
+                if batch_count >= BATCH_SIZE:
                     batch.commit()
                     batch = db.batch()
                     batch_count = 0
@@ -365,7 +366,7 @@ def clean_knowledge_graph_for_memory(uid: str, memory_id: str) -> Dict[str, int]
             stats['edges_deleted'] += 1
             batch_count += 1
             
-            if batch_count >= 500:
+            if batch_count >= BATCH_SIZE:
                 batch.commit()
                 batch = db.batch()
                 batch_count = 0
