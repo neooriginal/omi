@@ -244,3 +244,133 @@ def delete_knowledge_graph(uid: str) -> None:
     
     edges_ref = user_ref.collection(knowledge_edges_collection)
     _batch_delete(edges_ref)
+
+
+def clean_knowledge_graph_for_memory(uid: str, memory_id: str) -> Dict[str, int]:
+    """
+    Clean the knowledge graph when a memory is deleted.
+    
+    Removes the memory_id from all nodes and edges, and deletes orphaned nodes/edges.
+    
+    Args:
+        uid: User ID
+        memory_id: Memory ID to remove from the graph
+        
+    Returns:
+        Dict with counts of nodes and edges updated/deleted
+    """
+    user_ref = db.collection(users_collection).document(uid)
+    nodes_ref = user_ref.collection(knowledge_nodes_collection)
+    edges_ref = user_ref.collection(knowledge_edges_collection)
+    
+    stats = {
+        'nodes_updated': 0,
+        'nodes_deleted': 0,
+        'edges_updated': 0,
+        'edges_deleted': 0
+    }
+    
+    # Step 1: Update nodes - remove memory_id and track nodes to delete
+    nodes_to_delete = []
+    batch = db.batch()
+    batch_count = 0
+    
+    for node_doc in nodes_ref.stream():
+        node_data = node_doc.to_dict()
+        memory_ids = node_data.get('memory_ids', [])
+        
+        if memory_id in memory_ids:
+            # Remove the memory_id
+            updated_memory_ids = [mid for mid in memory_ids if mid != memory_id]
+            
+            if not updated_memory_ids:
+                # Node becomes orphaned, mark for deletion
+                nodes_to_delete.append(node_doc.id)
+            else:
+                # Update node with filtered memory_ids
+                batch.update(node_doc.reference, {
+                    'memory_ids': updated_memory_ids,
+                    'updated_at': datetime.now(timezone.utc)
+                })
+                stats['nodes_updated'] += 1
+                batch_count += 1
+                
+                if batch_count >= 500:
+                    batch.commit()
+                    batch = db.batch()
+                    batch_count = 0
+    
+    if batch_count > 0:
+        batch.commit()
+    
+    # Step 2: Delete orphaned nodes
+    if nodes_to_delete:
+        batch = db.batch()
+        batch_count = 0
+        for node_id in nodes_to_delete:
+            batch.delete(nodes_ref.document(node_id))
+            stats['nodes_deleted'] += 1
+            batch_count += 1
+            
+            if batch_count >= 500:
+                batch.commit()
+                batch = db.batch()
+                batch_count = 0
+        
+        if batch_count > 0:
+            batch.commit()
+    
+    # Step 3: Update/delete edges
+    deleted_node_ids = set(nodes_to_delete)
+    edges_to_delete = []
+    batch = db.batch()
+    batch_count = 0
+    
+    for edge_doc in edges_ref.stream():
+        edge_data = edge_doc.to_dict()
+        memory_ids = edge_data.get('memory_ids', [])
+        source_id = edge_data.get('source_id')
+        target_id = edge_data.get('target_id')
+        
+        # Delete edge if it references a deleted node
+        if source_id in deleted_node_ids or target_id in deleted_node_ids:
+            edges_to_delete.append(edge_doc.id)
+        elif memory_id in memory_ids:
+            # Remove the memory_id
+            updated_memory_ids = [mid for mid in memory_ids if mid != memory_id]
+            
+            if not updated_memory_ids:
+                # Edge becomes orphaned, mark for deletion
+                edges_to_delete.append(edge_doc.id)
+            else:
+                # Update edge with filtered memory_ids
+                batch.update(edge_doc.reference, {'memory_ids': updated_memory_ids})
+                stats['edges_updated'] += 1
+                batch_count += 1
+                
+                if batch_count >= 500:
+                    batch.commit()
+                    batch = db.batch()
+                    batch_count = 0
+    
+    if batch_count > 0:
+        batch.commit()
+    
+    # Step 4: Delete orphaned edges
+    if edges_to_delete:
+        batch = db.batch()
+        batch_count = 0
+        for edge_id in edges_to_delete:
+            batch.delete(edges_ref.document(edge_id))
+            stats['edges_deleted'] += 1
+            batch_count += 1
+            
+            if batch_count >= 500:
+                batch.commit()
+                batch = db.batch()
+                batch_count = 0
+        
+        if batch_count > 0:
+            batch.commit()
+    
+    return stats
