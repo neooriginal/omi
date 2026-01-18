@@ -11,6 +11,7 @@ export interface TranscriptSegment {
   speaker: number;
   isUser: boolean;
   timestamp: number;
+  isFinal?: boolean;
 }
 
 export interface TranscriptionSocketOptions {

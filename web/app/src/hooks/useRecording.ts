@@ -7,6 +7,7 @@ import {
   isAudioCaptureSupported,
 } from '@/lib/audioCapture';
 import { createTranscriptionSocket } from '@/lib/transcriptionSocket';
+import { createWebSpeechSocket } from '@/lib/webSpeechSocket';
 import { processInProgressConversation } from '@/lib/api';
 
 /**
@@ -66,32 +67,74 @@ export function useRecording() {
     pausedDurationRef.current = 0;
 
     try {
-      // Create transcription socket
-      const socket = createTranscriptionSocket({
-        onSegment: (segment: TranscriptSegment) => {
-          if (!isMountedRef.current) return;
-          setSegments((prev) => {
-            // Update existing segment or add new one
-            const existingIndex = prev.findIndex((s) => s.id === segment.id);
-            if (existingIndex >= 0) {
-              const updated = [...prev];
-              updated[existingIndex] = segment;
-              return updated;
-            }
-            return [...prev, segment];
-          });
-        },
-        onError: (err) => {
-          console.error('Transcription socket error:', err);
-          // Don't set error state for socket issues - just log them
-        },
-        onConnected: () => {
-          // Socket connected
-        },
-        onDisconnected: () => {
-          // Socket disconnected
-        },
-      });
+      // Check for on-device STT preference
+      let useOnDeviceSTT = false;
+      if (typeof window !== 'undefined') {
+        try {
+          const prefs = localStorage.getItem('omi_experimental_features');
+          if (prefs) {
+            const parsed = JSON.parse(prefs);
+            useOnDeviceSTT = !!parsed.onDeviceSTT;
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      let socket;
+
+      if (useOnDeviceSTT) {
+        // Use Web Speech API
+        const savedLanguage = typeof window !== 'undefined' ? localStorage.getItem('omi_transcription_language') : null;
+        socket = createWebSpeechSocket({
+          language: savedLanguage || 'en-US',
+          onSegment: (segment: TranscriptSegment) => {
+            if (!isMountedRef.current) return;
+            setSegments((prev) => {
+              // Update existing segment or append new one
+              const existingIndex = prev.findIndex((s) => s.id === segment.id);
+              if (existingIndex >= 0) {
+                const updated = [...prev];
+                updated[existingIndex] = segment;
+                return updated;
+              }
+              return [...prev, segment];
+            });
+          },
+          onError: (err) => {
+            console.error('Web Speech socket error:', err);
+          },
+          onConnected: () => { },
+          onDisconnected: () => { },
+        });
+      } else {
+        // Use standard WebSocket
+        socket = createTranscriptionSocket({
+          onSegment: (segment: TranscriptSegment) => {
+            if (!isMountedRef.current) return;
+            setSegments((prev) => {
+              // Update existing segment or add new one
+              const existingIndex = prev.findIndex((s) => s.id === segment.id);
+              if (existingIndex >= 0) {
+                const updated = [...prev];
+                updated[existingIndex] = segment;
+                return updated;
+              }
+              return [...prev, segment];
+            });
+          },
+          onError: (err) => {
+            console.error('Transcription socket error:', err);
+            // Don't set error state for socket issues - just log them
+          },
+          onConnected: () => {
+            // Socket connected
+          },
+          onDisconnected: () => {
+            // Socket disconnected
+          },
+        });
+      }
 
       transcriptionSocketRef.current = socket;
 
